@@ -1,0 +1,44 @@
+{
+  "antigravity-pets": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 dispatcher/dispatch_hook.py --event PreToolUse"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 dispatcher/dispatch_hook.py --event PostToolUse"
+          }
+        ]
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python3 dispatcher/dispatch_hook.py --event PreInvocation"
+      }
+    ],
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "python3 dispatcher/dispatch_hook.py --event PostInvocation"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 dispatcher/dispatch_hook.py --event Stop"
+      }
+    ]
+  }
+}

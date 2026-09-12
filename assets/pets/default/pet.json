@@ -1,0 +1,60 @@
+{
+  "id": "default",
+  "name": "Antigravity Pet",
+  "version": "1.0.0",
+  "author": "Antigravity",
+  "grid": {
+    "columns": 8,
+    "rows": 9,
+    "cell_width": 192,
+    "cell_height": 208
+  },
+  "fps": 10,
+  "animations": {
+    "idle": {
+      "row": 0,
+      "frames": 8,
+      "fps": 8
+    },
+    "move_left": {
+      "row": 1,
+      "frames": 8,
+      "fps": 12
+    },
+    "move_right": {
+      "row": 2,
+      "frames": 8,
+      "fps": 12
+    },
+    "jump": {
+      "row": 3,
+      "frames": 8,
+      "fps": 10
+    },
+    "wave": {
+      "row": 4,
+      "frames": 8,
+      "fps": 8
+    },
+    "failed": {
+      "row": 5,
+      "frames": 8,
+      "fps": 8
+    },
+    "waiting": {
+      "row": 6,
+      "frames": 8,
+      "fps": 6
+    },
+    "working": {
+      "row": 7,
+      "frames": 8,
+      "fps": 12
+    },
+    "review": {
+      "row": 8,
+      "frames": 8,
+      "fps": 8
+    }
+  }
+}
