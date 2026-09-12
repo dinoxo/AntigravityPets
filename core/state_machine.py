@@ -143,6 +143,8 @@ class PetStateMachine:
         with self._lock:
             if self._current_state == state_when_scheduled:
                 revert_to = PetState.IDLE
+                self._current_title = None
+                self._current_detail = None
             else:
                 return
         self.set_state(revert_to, schedule_revert=False)
@@ -190,7 +192,10 @@ class PetStateMachine:
             if packet.title is not None:
                 self._current_title = packet.title
             if packet.detail is not None:
-                self._current_detail = packet.detail
+                # Do not clobber rich tool details (commands, filenames) with generic completion text
+                is_generic = packet.detail.endswith("completed") or packet.detail == "Processing step..."
+                if not (event == "PostToolUse" and is_generic and self._current_detail):
+                    self._current_detail = packet.detail
 
         if event in ("PreInvocation", "PreToolUse"):
             self.set_state(PetState.WORKING, schedule_revert=False)

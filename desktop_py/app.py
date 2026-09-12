@@ -142,6 +142,11 @@ def run_qt_app() -> None:
             self.interaction_revert_timer.setSingleShot(True)
             self.interaction_revert_timer.timeout.connect(self._revert_interaction)
 
+            # Timer to gracefully return to IDLE and show clock when agent is idle/waiting
+            self.agent_idle_timer = QTimer(self)
+            self.agent_idle_timer.setSingleShot(True)
+            self.agent_idle_timer.timeout.connect(self._on_agent_inactivity)
+
             # Load pet package
             self.pet_package: Optional[PetPackage] = None
             self.pixmap: Optional[QPixmap] = None
@@ -409,7 +414,19 @@ def run_qt_app() -> None:
             self.interaction_quote = None
             self.interaction_title = None
             self.state_machine.set_state(PetState.IDLE, schedule_revert=False)
+            with self.state_machine._lock:
+                self.state_machine._current_title = None
+                self.state_machine._current_detail = None
             self.update()
+
+        def _on_agent_inactivity(self) -> None:
+            """Gracefully return to IDLE breathing with the clock after waiting or reviewing."""
+            if self.state_machine.current_state in (PetState.WAITING, PetState.REVIEW):
+                self.state_machine.set_state(PetState.IDLE, schedule_revert=False)
+                with self.state_machine._lock:
+                    self.state_machine._current_title = None
+                    self.state_machine._current_detail = None
+                self.update()
 
         def toggle_sounds(self, enabled: bool) -> None:
             self.sounds_enabled = enabled
@@ -521,6 +538,13 @@ def run_qt_app() -> None:
                     play_sound_async("chime")
                 elif packet.error:
                     play_sound_async("error")
+
+            # After 12s of waiting or review without new agent activity, gracefully return to IDLE with clock
+            if packet.event in ("PostInvocation", "PostToolUse", "Stop"):
+                self.agent_idle_timer.start(12000)
+            else:
+                self.agent_idle_timer.stop()
+
             self.update()
 
         def closeEvent(self, event) -> None:

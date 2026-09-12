@@ -57,7 +57,15 @@ class IPCServer:
                 self._dispatch(packet)
             except socket.timeout:
                 continue
-            except OSError:
+            except (ConnectionResetError, ConnectionRefusedError):
+                # On Windows, Winsock raises ConnectionResetError (WSAECONNRESET 10054)
+                # when an ICMP port unreachable is returned. Must ignore and keep listening.
+                continue
+            except OSError as e:
+                if getattr(e, "winerror", None) == 10054 or getattr(e, "errno", None) == 10054:
+                    continue
+                if self._running:
+                    continue
                 break
             except Exception as e:
                 logger.debug("Failed parsing incoming UDP packet: %s", e)
@@ -74,6 +82,8 @@ class IPCServer:
             except socket.timeout:
                 continue
             except OSError:
+                if self._running:
+                    continue
                 break
             except Exception as e:
                 logger.debug("Failed parsing incoming UDS packet: %s", e)
@@ -88,6 +98,12 @@ class IPCServer:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # On Windows, disable WSAECONNRESET on UDP socket if available
+            if hasattr(socket, "SIO_UDP_CONNRESET"):
+                try:
+                    sock.ioctl(socket.SIO_UDP_CONNRESET, False)
+                except Exception:
+                    pass
             sock.bind((self.udp_host, self.udp_port))
             sock.settimeout(0.5)
             self._udp_sock = sock

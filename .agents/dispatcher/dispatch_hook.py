@@ -64,8 +64,8 @@ def extract_action_summary(
 
         if name == "run_command":
             cmd = args.get("CommandLine", "")
-            if len(cmd) > 35:
-                cmd = cmd[:32] + "..."
+            if len(cmd) > 120:
+                cmd = cmd[:117] + "..."
             return "Running Command", cmd or "Executing shell command"
 
         if name in ("write_to_file", "replace_file_content"):
@@ -81,7 +81,7 @@ def extract_action_summary(
 
         if name == "grep_search":
             q = args.get("Query", "")
-            return "Searching Code", f'"{q[:28]}"' if q else "Grep search"
+            return "Searching Code", f'"{q[:60]}"' if q else "Grep search"
 
         if name == "find_by_name":
             p = args.get("Pattern", "")
@@ -89,11 +89,11 @@ def extract_action_summary(
 
         if name == "search_web":
             q = args.get("query", "")
-            return "Searching Web", f'"{q[:28]}"' if q else "Web search"
+            return "Searching Web", f'"{q[:60]}"' if q else "Web search"
 
         if name == "read_url_content":
             u = args.get("Url", "")
-            return "Fetching URL", u[:35] if u else "HTTP request"
+            return "Fetching URL", u[:80] if u else "HTTP request"
 
         if name == "ask_question":
             return "Asking Question", "Waiting for your answer"
@@ -103,12 +103,12 @@ def extract_action_summary(
     if event_type == "PostToolUse":
         if error_msg:
             err = error_msg.splitlines()[0] if error_msg else "Error"
-            return "Tool Failed", err[:35]
+            return "Tool Failed", err[:80]
         return "Reviewing", f"{tool_name or 'Step'} completed"
 
     if event_type == "Stop":
         if error_msg:
-            return "Stopped with Error", error_msg[:35]
+            return "Stopped with Error", error_msg[:80]
         return "Task Completed", "All goals finished!"
 
     return event_type, ""
