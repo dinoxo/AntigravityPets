@@ -1,6 +1,7 @@
 """Python Desktop Companion overlay for Antigravity Pets using PySide6/PyQt."""
 
 import datetime
+import math
 import os
 import random
 import sys
@@ -90,6 +91,15 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.asset_loader import AssetLoader, PetPackage
+from core.features import (
+    ActionHistory,
+    ActionRecord,
+    ArchitectureWisdom,
+    GitMonitor,
+    PhysicsEngine,
+    PomodoroManager,
+    WatchdogTimer,
+)
 from core.state_machine import PetState, PetStateMachine
 from ipc.protocol import EventPacket
 from ipc.server import IPCServer
@@ -98,12 +108,12 @@ from ipc.server import IPCServer
 def run_qt_app() -> None:
     try:
         from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
-        from PySide6.QtGui import QAction, QContextMenuEvent, QMouseEvent, QPainter, QPixmap
+        from PySide6.QtGui import QAction, QContextMenuEvent, QCursor, QMouseEvent, QPainter, QPixmap
         from PySide6.QtWidgets import QApplication, QMenu, QWidget
     except ImportError:
         try:
             from PyQt6.QtCore import QPoint, QRect, Qt, QTimer, pyqtSignal as Signal
-            from PyQt6.QtGui import QAction, QContextMenuEvent, QMouseEvent, QPainter, QPixmap
+            from PyQt6.QtGui import QAction, QContextMenuEvent, QCursor, QMouseEvent, QPainter, QPixmap
             from PyQt6.QtWidgets import QApplication, QMenu, QWidget
         except ImportError:
             print("Neither PySide6 nor PyQt6 is installed.")
@@ -115,6 +125,7 @@ def run_qt_app() -> None:
 
     class PetOverlayWidget(QWidget):
         event_received_signal = Signal(object)
+        watchdog_signal = Signal(str, float)
 
         def __init__(self, loader: AssetLoader, initial_pet: str = "default") -> None:
             super().__init__()
@@ -123,13 +134,14 @@ def run_qt_app() -> None:
             self.current_frame = 0
             self.scale_factor = 1.0
 
-            # Window setup: frameless, transparent, stays on top
+            # Window setup: frameless, transparent, stays on top, accepts drops
             self.setWindowFlags(
                 Qt.WindowType.FramelessWindowHint
                 | Qt.WindowType.WindowStaysOnTopHint
                 | Qt.WindowType.Tool
             )
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            self.setAcceptDrops(True)
 
             self.drag_position: Optional[QPoint] = None
 
@@ -142,10 +154,41 @@ def run_qt_app() -> None:
             self.interaction_revert_timer.setSingleShot(True)
             self.interaction_revert_timer.timeout.connect(self._revert_interaction)
 
+            # Features Domain Architecture
+            self.action_history = ActionHistory(max_entries=10)
+            self.show_history: bool = False
+            self.git_monitor = GitMonitor(str(PROJECT_ROOT))
+            self.physics = PhysicsEngine()
+            self.watchdog = WatchdogTimer(timeout_seconds=120.0, on_timeout=self._on_watchdog_timeout)
+            self.pomodoro = PomodoroManager(on_break_start=self._on_pomodoro_break, on_work_start=self._on_pomodoro_work)
+            self.watchdog_signal.connect(self._handle_watchdog_alert)
+
+            # Screensaver / Roaming
+            self.idle_seconds: int = 0
+            self.is_roaming: bool = False
+            self.roam_direction: int = 1
+
             # Timer to gracefully return to IDLE and show clock when agent is idle/waiting
             self.agent_idle_timer = QTimer(self)
             self.agent_idle_timer.setSingleShot(True)
             self.agent_idle_timer.timeout.connect(self._on_agent_inactivity)
+
+            # Feature background timers
+            self.git_timer = QTimer(self)
+            self.git_timer.timeout.connect(self._refresh_git)
+            self.git_timer.start(10000)
+            self._refresh_git()
+
+            self.pomodoro_timer = QTimer(self)
+            self.pomodoro_timer.timeout.connect(self._tick_pomodoro)
+            self.pomodoro_timer.start(1000)
+
+            self.physics_timer = QTimer(self)
+            self.physics_timer.timeout.connect(self._tick_physics)
+
+            self.screensaver_timer = QTimer(self)
+            self.screensaver_timer.timeout.connect(self._tick_screensaver)
+            self.screensaver_timer.start(1000)
 
             # Load pet package
             self.pet_package: Optional[PetPackage] = None
@@ -203,8 +246,9 @@ def run_qt_app() -> None:
         def update_geometry(self) -> None:
             if not self.pet_package:
                 return
-            hud_h = int(90 * self.scale_factor)
-            w = int(max(self.pet_package.cell_width * self.scale_factor, 320 * self.scale_factor))
+            base_hud_h = 220 if self.show_history else 90
+            hud_h = int(base_hud_h * self.scale_factor)
+            w = int(max(self.pet_package.cell_width * self.scale_factor, (360 if self.show_history else 320) * self.scale_factor))
             h = int(self.pet_package.cell_height * self.scale_factor + hud_h)
             self.resize(w, h)
 
@@ -212,6 +256,109 @@ def run_qt_app() -> None:
             self.scale_factor = scale
             self.update_geometry()
             self.update()
+
+        def toggle_history(self) -> None:
+            self.show_history = not self.show_history
+            self.update_geometry()
+            self.update()
+
+        def _refresh_git(self) -> None:
+            self.git_monitor.refresh()
+            self.update()
+
+        def _on_pomodoro_break(self, tip: str) -> None:
+            self.interaction_title = "🍅 ¡Pausa de Pomodoro!"
+            self.interaction_quote = f"«¡Cumpliste 25 min de foco! {tip}»"
+            self.state_machine.set_state(PetState.WAVE, schedule_revert=False)
+            self.interaction_revert_timer.start(8000)
+            if self.sounds_enabled:
+                play_sound_async("chime")
+            self.update()
+
+        def _on_pomodoro_work(self) -> None:
+            self.interaction_title = "🍅 Foco Pomodoro"
+            self.interaction_quote = "«¡Terminó el recreo! A seguir programando con excelencia.»"
+            self.state_machine.set_state(PetState.WORKING, schedule_revert=False)
+            self.interaction_revert_timer.start(5000)
+            if self.sounds_enabled:
+                play_sound_async("ok")
+            self.update()
+
+        def _tick_pomodoro(self) -> None:
+            self.pomodoro.tick_second()
+
+        def _tick_physics(self) -> None:
+            screen = QApplication.primaryScreen().availableGeometry()
+            floor_y = screen.bottom() - self.height()
+            new_y, settled = self.physics.update_position(self.y(), floor_y)
+            self.move(self.x(), new_y)
+            if settled:
+                self.physics_timer.stop()
+                if self.sounds_enabled:
+                    play_sound_async("ok")
+
+        def _tick_screensaver(self) -> None:
+            if self.state_machine.current_state != PetState.IDLE or self.interaction_quote:
+                self.idle_seconds = 0
+                if self.is_roaming:
+                    self.is_roaming = False
+                    self.state_machine.set_state(PetState.IDLE, schedule_revert=False)
+                return
+
+            self.idle_seconds += 1
+            if self.idle_seconds >= 600:  # 10 minutes
+                self.is_roaming = True
+                screen = QApplication.primaryScreen().availableGeometry()
+                step = 2 * self.roam_direction
+                new_x = self.x() + step
+                min_x = screen.left()
+                max_x = screen.right() - self.width()
+
+                if new_x <= min_x:
+                    self.roam_direction = 1
+                    self.state_machine.set_state(PetState.MOVE_RIGHT, schedule_revert=False)
+                elif new_x >= max_x:
+                    self.roam_direction = -1
+                    self.state_machine.set_state(PetState.MOVE_LEFT, schedule_revert=False)
+                else:
+                    target_state = PetState.MOVE_RIGHT if self.roam_direction > 0 else PetState.MOVE_LEFT
+                    if self.state_machine.current_state != target_state:
+                        self.state_machine.set_state(target_state, schedule_revert=False)
+                self.move(new_x, self.y())
+
+        def _on_watchdog_timeout(self, task_name: str, elapsed: float) -> None:
+            self.watchdog_signal.emit(task_name, elapsed)
+
+        def _handle_watchdog_alert(self, task_name: str, elapsed: float) -> None:
+            mins = max(1, int(elapsed // 60))
+            self.interaction_title = "⚠️ Tarea Colgada"
+            self.interaction_quote = f"«¡Atención! La tarea '{task_name}' lleva más de {mins} min sin responder. ¿Se habrá trabado?»"
+            self.state_machine.set_state(PetState.WAITING, schedule_revert=False)
+            self.interaction_revert_timer.start(9000)
+            if self.sounds_enabled:
+                play_sound_async("error")
+            self.update()
+
+        def dragEnterEvent(self, event) -> None:
+            if event.mimeData().hasUrls():
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+
+        def dropEvent(self, event) -> None:
+            if event.mimeData().hasUrls():
+                urls = event.mimeData().urls()
+                paths = [u.toLocalFile() for u in urls if u.isLocalFile()]
+                if paths:
+                    fname = os.path.basename(paths[0])
+                    self.interaction_title = "📥 Archivo Recibido"
+                    self.interaction_quote = f"«¡Recibí '{fname}'! Listo para que Antigravity lo inspeccione.»"
+                    self.state_machine.set_state(PetState.WAVE, schedule_revert=False)
+                    self.interaction_revert_timer.start(5000)
+                    if self.sounds_enabled:
+                        play_sound_async("ok")
+                    self.update()
+                event.acceptProposedAction()
 
         def update_animation_speed(self) -> None:
             if not self.pet_package:
@@ -242,33 +389,97 @@ def run_qt_app() -> None:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
 
-            hud_h = int(90 * self.scale_factor)
+            base_hud_h = 220 if self.show_history else 90
+            hud_h = int(base_hud_h * self.scale_factor)
             pet_w = int(self.pet_package.cell_width * self.scale_factor)
             pet_h = int(self.pet_package.cell_height * self.scale_factor)
             pet_x = (self.width() - pet_w) // 2
 
-            # 1. Draw Pet Sprite
+            # 1. Draw Pet Sprite (with Gaze Tracking when Idle)
             state = self.state_machine.current_state
-            x, y, w, h = self.pet_package.get_frame_rect(state, self.current_frame)
+            if state == PetState.IDLE and self.pet_package.rows >= 11:
+                # Codex v2: 16 directional gaze frames in rows 9 and 10
+                cpos = QCursor.pos()
+                center_g = self.mapToGlobal(self.rect().center())
+                dx = cpos.x() - center_g.x()
+                dy = cpos.y() - center_g.y()
+                angle = (math.atan2(dy, dx) + math.pi) / (2 * math.pi)
+                gaze_idx = int(angle * 16) % 16
+                row = 9 if gaze_idx < 8 else 10
+                col = gaze_idx if gaze_idx < 8 else (gaze_idx - 8)
+                x = col * self.pet_package.cell_width
+                y = row * self.pet_package.cell_height
+                w = self.pet_package.cell_width
+                h = self.pet_package.cell_height
+            else:
+                x, y, w, h = self.pet_package.get_frame_rect(state, self.current_frame)
+
             source_rect = QRect(x, y, w, h)
             target_rect = QRect(pet_x, hud_h, pet_w, pet_h)
             painter.drawPixmap(target_rect, self.pixmap, source_rect)
 
-            # 2. Draw Floating HUD Capsule Bubble
+            from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPen
+
+            # 2. Draw History Drawer if open
+            if self.show_history:
+                drawer_w = min(self.width() - 16, int(340 * self.scale_factor))
+                drawer_h = int(120 * self.scale_factor)
+                drawer_x = (self.width() - drawer_w) // 2
+                drawer_y = 6
+
+                painter.setBrush(QBrush(QColor(20, 24, 32, 245)))
+                painter.setPen(QPen(QColor(80, 140, 220, 120), 1))
+                painter.drawRoundedRect(drawer_x, drawer_y, drawer_w, drawer_h, 10, 10)
+
+                hdr_font = QFont()
+                hdr_font.setPointSize(int(8 * min(self.scale_factor, 1.4)))
+                hdr_font.setBold(True)
+                painter.setFont(hdr_font)
+                painter.setPen(QColor(130, 195, 255))
+                painter.drawText(drawer_x + 10, drawer_y + 18, "📜 Historial de Acciones Recientes")
+
+                recent = self.action_history.get_recent(4)
+                item_font = QFont()
+                item_font.setPointSize(int(7.5 * min(self.scale_factor, 1.4)))
+                painter.setFont(item_font)
+
+                y_pos = drawer_y + 38
+                if not recent:
+                    painter.setPen(QColor(160, 165, 175))
+                    painter.drawText(drawer_x + 12, y_pos, "No hay eventos registrados en esta sesión")
+                else:
+                    for rec in recent:
+                        if rec.is_secret:
+                            icon = "🥷"
+                        elif rec.is_error:
+                            icon = "❌"
+                        elif rec.event in ("PostToolUse", "Stop"):
+                            icon = "✅"
+                        else:
+                            icon = "⏳"
+                        painter.setPen(QColor(220, 225, 235))
+                        short_det = rec.detail[:30] + "..." if len(rec.detail) > 30 else rec.detail
+                        line_text = f"[{rec.time_str}] {icon} {rec.title}: {short_det}"
+                        painter.drawText(drawer_x + 10, y_pos, line_text)
+                        y_pos += int(20 * self.scale_factor)
+
+            # 3. Draw Floating HUD Capsule Bubble
             now_str = datetime.now().strftime("%H:%M")
             if self.interaction_quote:
                 title = self.interaction_title or f"⏰ {now_str} hs"
                 detail = self.interaction_quote
             elif state == PetState.IDLE and not self.state_machine.current_title:
-                title = f"⏰ {now_str} hs"
-                detail = "Cochepa en reposo"
+                if self.state_machine.is_night_mode:
+                    title = f"🌙 {now_str} hs (Madrugada)"
+                    detail = "Cochepa te sugiere descansar pronto"
+                else:
+                    title = f"⏰ {now_str} hs"
+                    detail = "Cochepa en reposo"
             else:
                 raw_title = self.state_machine.current_title or state.value.title()
                 raw_detail = self.state_machine.current_detail or ""
                 title = translate_text(raw_title)
                 detail = translate_text(raw_detail)
-
-            from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPen
 
             title_font = QFont()
             title_font.setPointSize(int(9 * min(self.scale_factor, 1.4)))
@@ -290,7 +501,7 @@ def run_qt_app() -> None:
                 raw_detail_w = detail_fm.horizontalAdvance(detail_clean)
                 if raw_detail_w <= max_inner_w:
                     desired_w = max(title_w, raw_detail_w)
-                    pill_w = max(int(150 * self.scale_factor), min(max_pill_w, desired_w + padding_x * 2 + 12))
+                    pill_w = max(int(160 * self.scale_factor), min(max_pill_w, desired_w + padding_x * 2 + 12))
                 else:
                     pill_w = max_pill_w
                 inner_w = pill_w - (padding_x * 2)
@@ -299,11 +510,11 @@ def run_qt_app() -> None:
                     int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignCenter),
                     detail_clean,
                 )
-                max_detail_h = hud_h - 22 - title_h
-                detail_h = max(int(14 * self.scale_factor), min(detail_bound.height(), max_detail_h))
+                max_detail_h = 45 * self.scale_factor
+                detail_h = max(int(14 * self.scale_factor), min(detail_bound.height(), int(max_detail_h)))
                 pill_h = 6 + title_h + 3 + detail_h + 6
             else:
-                pill_w = max(int(130 * self.scale_factor), min(max_pill_w, title_w + padding_x * 2 + 12))
+                pill_w = max(int(140 * self.scale_factor), min(max_pill_w, title_w + padding_x * 2 + 12))
                 pill_h = title_h + 14
                 detail_h = 0
 
@@ -337,6 +548,21 @@ def run_qt_app() -> None:
                 # Vertically centered title
                 title_rect = QRect(pill_x + padding_x, pill_y, pill_w - (padding_x * 2), pill_h)
                 painter.drawText(title_rect, int(Qt.AlignmentFlag.AlignCenter), title)
+
+            # 4. Subtle Git Branch Indicator in Corner
+            git_stat = self.git_monitor.current
+            branch_short = git_stat.branch[:14]
+            branch_icon = "⚠️" if git_stat.is_protected else "🌿"
+            dirty_mark = "*" if git_stat.is_dirty else ""
+            badge_text = f"{branch_icon} {branch_short}{dirty_mark}"
+
+            badge_font = QFont()
+            badge_font.setPointSize(int(6.5 * min(self.scale_factor, 1.4)))
+            painter.setFont(badge_font)
+            painter.setPen(QColor(160, 180, 200, 190))
+            badge_fm = QFontMetrics(badge_font)
+            badge_w = badge_fm.horizontalAdvance(badge_text)
+            painter.drawText(pill_x + pill_w - badge_w - 6, pill_y + 11, badge_text)
 
         def trigger_interaction(self, action: str = "saludo") -> None:
             """Trigger an interactive animation, sound, and witty Spanish teacher quote."""
@@ -390,6 +616,10 @@ def run_qt_app() -> None:
                     "«¡Éxito total! ¡Pruebas pasadas y sin errores!»",
                     "«¡Excelente trabajo! Un diez rotundo para el equipo.»",
                 ]
+            elif action == "arquitectura":
+                target_state = PetState.REVIEW
+                self.interaction_title = "🧑‍🏫 Píldora de Arquitectura"
+                quotes = [ArchitectureWisdom.get_random_pill()]
             elif action == "hora":
                 target_state = PetState.IDLE
                 self.interaction_title = f"⏰ {now_str} hs"
@@ -407,7 +637,7 @@ def run_qt_app() -> None:
                 play_sound_async("ok")
 
             self.state_machine.set_state(target_state, schedule_revert=False)
-            self.interaction_revert_timer.start(4500)
+            self.interaction_revert_timer.start(5500)
             self.update()
 
         def _revert_interaction(self) -> None:
@@ -433,13 +663,27 @@ def run_qt_app() -> None:
 
         def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
             if event.button() == Qt.MouseButton.LeftButton:
-                # Double click alternates between a greeting, coffee, or advice
-                choice = random.choice(["cafe", "saludo", "quijote"])
+                choice = random.choice(["cafe", "saludo", "quijote", "arquitectura"])
                 self.trigger_interaction(choice)
                 event.accept()
 
         def mousePressEvent(self, event: QMouseEvent) -> None:
             if event.button() == Qt.MouseButton.LeftButton:
+                self.idle_seconds = 0
+                if self.is_roaming:
+                    self.is_roaming = False
+                    self.state_machine.set_state(PetState.IDLE, schedule_revert=False)
+                if self.physics_timer.isActive():
+                    self.physics_timer.stop()
+
+                # Clicking the top HUD capsule toggles history
+                hud_h = int((220 if self.show_history else 90) * self.scale_factor)
+                pos_y = event.position().toPoint().y() if hasattr(event, "position") else event.pos().y()
+                if pos_y < hud_h:
+                    self.toggle_history()
+                    event.accept()
+                    return
+
                 self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                 event.accept()
 
@@ -455,6 +699,15 @@ def run_qt_app() -> None:
             if event.button() == Qt.MouseButton.LeftButton:
                 self.drag_position = None
                 self.state_machine.handle_drag_end()
+                self.idle_seconds = 0
+
+                # Check if dropped in mid-air -> start gravity bounce drop
+                screen = QApplication.primaryScreen().availableGeometry()
+                floor_y = screen.bottom() - self.height()
+                if self.y() < floor_y - 25:
+                    self.physics.start_drop()
+                    self.physics_timer.start(16)
+
                 event.accept()
 
         def contextMenuEvent(self, event: QContextMenuEvent) -> None:
@@ -464,8 +717,26 @@ def run_qt_app() -> None:
             title_action.setEnabled(False)
             menu.addSeparator()
 
+            # Pomodoro control
+            pomo_str = f"🍅 Pomodoro ({self.pomodoro.formatted_time})"
+            if self.pomodoro.is_running:
+                pomo_act = menu.addAction(f"⏸️ Pausar {pomo_str}")
+                pomo_act.triggered.connect(self.pomodoro.pause)
+            else:
+                pomo_act = menu.addAction(f"▶️ Iniciar {pomo_str}")
+                pomo_act.triggered.connect(self.pomodoro.resume if self.pomodoro.seconds_left < self.pomodoro.WORK_DURATION else self.pomodoro.start)
+
+            # History drawer toggle
+            hist_label = "📜 Ocultar Historial" if self.show_history else "📜 Ver Historial de Acciones"
+            hist_act = menu.addAction(hist_label)
+            hist_act.triggered.connect(self.toggle_history)
+
+            menu.addSeparator()
+
             # Actions submenu
             actions_menu = menu.addMenu("Acciones")
+            act_arch = actions_menu.addAction("🧑‍🏫 Consejo de Arquitectura")
+            act_arch.triggered.connect(lambda: self.trigger_interaction("arquitectura"))
             act_cafe = actions_menu.addAction("☕ Tomar Café")
             act_cafe.triggered.connect(lambda: self.trigger_interaction("cafe"))
             act_saludo = actions_menu.addAction("👋 Saludar")
@@ -530,16 +801,45 @@ def run_qt_app() -> None:
         def _handle_event_in_main_thread(self, packet: EventPacket) -> None:
             self.interaction_quote = None
             self.interaction_title = None
+            self.idle_seconds = 0
+            if self.is_roaming:
+                self.is_roaming = False
+                self.state_machine.set_state(PetState.IDLE, schedule_revert=False)
+
             if self.interaction_revert_timer.isActive():
                 self.interaction_revert_timer.stop()
+
+            # Record in ActionHistory
+            is_secret = getattr(packet, "is_secret", False)
+            title = packet.title or packet.event
+            detail = packet.detail or ""
+            is_error = bool(packet.error)
+            self.action_history.add(
+                event=packet.event,
+                tool=packet.tool,
+                title=title,
+                detail=detail,
+                is_error=is_error,
+                is_secret=is_secret,
+            )
+
+            # Watchdog management
+            if packet.event in ("PreToolUse", "PreInvocation"):
+                self.watchdog.task_started(title)
+            else:
+                self.watchdog.task_completed()
+
             self.state_machine.process_event(packet)
+
             if self.sounds_enabled:
-                if packet.event == "Stop" and not packet.error:
+                if is_secret:
+                    play_sound_async("ok")
+                elif packet.event == "Stop" and not packet.error:
                     play_sound_async("chime")
                 elif packet.error:
                     play_sound_async("error")
 
-            # After 12s of waiting or review without new agent activity, gracefully return to IDLE with clock
+            # Inactivity timer: return to resting state with clock after 12s of waiting or review
             if packet.event in ("PostInvocation", "PostToolUse", "Stop"):
                 self.agent_idle_timer.start(12000)
             else:

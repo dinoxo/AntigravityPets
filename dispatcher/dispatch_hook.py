@@ -44,18 +44,38 @@ def fast_send(payload_bytes: bytes) -> None:
             pass
 
 
+SECRET_KEYWORDS = (
+    ".env",
+    "credentials",
+    "id_rsa",
+    "id_ed25519",
+    "secrets",
+    "token",
+    "password",
+    "key.json",
+    "client_secret",
+)
+
+
+def is_secret_target(text: str) -> bool:
+    if not text:
+        return False
+    low = text.lower()
+    return any(k in low for k in SECRET_KEYWORDS)
+
+
 def extract_action_summary(
     event_type: str,
     data: Dict[str, Any],
     tool_name: Optional[str],
     error_msg: Optional[str],
-) -> Tuple[str, str]:
-    """Derive clean human-readable title and detail for the desktop HUD."""
+) -> Tuple[str, str, bool]:
+    """Derive clean human-readable title, detail, and secret flag for the desktop HUD."""
     if event_type == "PreInvocation":
-        return "Thinking...", "Analyzing context & planning"
+        return "Thinking...", "Analyzing context & planning", False
 
     if event_type == "PostInvocation":
-        return "Waiting", "Awaiting user response"
+        return "Waiting", "Awaiting user response", False
 
     if event_type == "PreToolUse":
         tool_call = data.get("toolCall", {}) if isinstance(data, dict) else {}
@@ -64,54 +84,62 @@ def extract_action_summary(
 
         if name == "run_command":
             cmd = args.get("CommandLine", "")
+            if is_secret_target(cmd):
+                return "Modo Sigilo", "Ejecutando comando con secretos", True
             if len(cmd) > 120:
                 cmd = cmd[:117] + "..."
-            return "Running Command", cmd or "Executing shell command"
+            return "Running Command", cmd or "Executing shell command", False
 
         if name in ("write_to_file", "replace_file_content"):
             target = args.get("TargetFile", "")
+            if is_secret_target(target):
+                fname = os.path.basename(target) if target else "confidencial"
+                return "Modo Sigilo", f"Editando archivo confidencial: {fname}", True
             fname = os.path.basename(target) if target else "file"
             action = "Writing" if name == "write_to_file" else "Editing"
-            return f"{action} File", fname
+            return f"{action} File", fname, False
 
         if name == "view_file":
             path = args.get("AbsolutePath", "")
+            if is_secret_target(path):
+                fname = os.path.basename(path) if path else "confidencial"
+                return "Modo Sigilo", f"Leyendo archivo confidencial: {fname}", True
             fname = os.path.basename(path) if path else "file"
-            return "Reading File", fname
+            return "Reading File", fname, False
 
         if name == "grep_search":
             q = args.get("Query", "")
-            return "Searching Code", f'"{q[:60]}"' if q else "Grep search"
+            return "Searching Code", f'"{q[:60]}"' if q else "Grep search", False
 
         if name == "find_by_name":
             p = args.get("Pattern", "")
-            return "Finding Files", p or "File pattern search"
+            return "Finding Files", p or "File pattern search", False
 
         if name == "search_web":
             q = args.get("query", "")
-            return "Searching Web", f'"{q[:60]}"' if q else "Web search"
+            return "Searching Web", f'"{q[:60]}"' if q else "Web search", False
 
         if name == "read_url_content":
             u = args.get("Url", "")
-            return "Fetching URL", u[:80] if u else "HTTP request"
+            return "Fetching URL", u[:80] if u else "HTTP request", False
 
         if name == "ask_question":
-            return "Asking Question", "Waiting for your answer"
+            return "Asking Question", "Waiting for your answer", False
 
-        return f"Executing {name}", "Processing step..."
+        return f"Executing {name}", "Processing step...", False
 
     if event_type == "PostToolUse":
         if error_msg:
             err = error_msg.splitlines()[0] if error_msg else "Error"
-            return "Tool Failed", err[:80]
-        return "Reviewing", f"{tool_name or 'Step'} completed"
+            return "Tool Failed", err[:80], False
+        return "Reviewing", f"{tool_name or 'Step'} completed", False
 
     if event_type == "Stop":
         if error_msg:
-            return "Stopped with Error", error_msg[:80]
-        return "Task Completed", "All goals finished!"
+            return "Stopped with Error", error_msg[:80], False
+        return "Task Completed", "All goals finished!", False
 
-    return event_type, ""
+    return event_type, "", False
 
 
 def main() -> None:
@@ -142,7 +170,7 @@ def main() -> None:
                 if error_msg == "":
                     error_msg = None
 
-        title, detail = extract_action_summary(event_type, payload_data, tool_name, error_msg)
+        title, detail, is_secret = extract_action_summary(event_type, payload_data, tool_name, error_msg)
 
         # Build and dispatch packet
         packet = {
@@ -152,6 +180,7 @@ def main() -> None:
             "error": error_msg,
             "title": title,
             "detail": detail,
+            "is_secret": is_secret,
         }
         payload_bytes = json.dumps(packet).encode("utf-8")
         fast_send(payload_bytes)

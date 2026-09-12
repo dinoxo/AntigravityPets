@@ -28,6 +28,7 @@ class EventPacket:
     error: Optional[str] = None
     title: Optional[str] = None
     detail: Optional[str] = None
+    is_secret: bool = False
 
     def to_json(self) -> str:
         """Serialize event packet to JSON string."""
@@ -39,6 +40,7 @@ class EventPacket:
                 "error": self.error,
                 "title": self.title,
                 "detail": self.detail,
+                "is_secret": self.is_secret,
             }
         )
 
@@ -78,6 +80,8 @@ class EventPacket:
         if detail is not None:
             detail = str(detail)
 
+        is_secret = bool(data.get("is_secret", False))
+
         return cls(
             event=event,
             timestamp=timestamp,
@@ -85,6 +89,7 @@ class EventPacket:
             error=error,
             title=title,
             detail=detail,
+            is_secret=is_secret,
         )
 
     @classmethod

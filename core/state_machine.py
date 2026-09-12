@@ -1,5 +1,6 @@
 """Pet State Machine mapping Antigravity lifecycle events to animation rows."""
 
+from datetime import datetime
 from enum import Enum
 import logging
 import threading
@@ -69,6 +70,8 @@ class PetStateMachine:
         self._last_error: Optional[str] = None
         self._current_title: Optional[str] = None
         self._current_detail: Optional[str] = None
+        self._consecutive_errors: int = 0
+        self._is_secret: bool = False
 
     @property
     def current_state(self) -> PetState:
@@ -98,6 +101,21 @@ class PetStateMachine:
     def current_detail(self) -> Optional[str]:
         with self._lock:
             return self._current_detail
+
+    @property
+    def consecutive_errors(self) -> int:
+        with self._lock:
+            return self._consecutive_errors
+
+    @property
+    def is_secret(self) -> bool:
+        with self._lock:
+            return self._is_secret
+
+    @property
+    def is_night_mode(self) -> bool:
+        """True if current local hour is late night or dawn (00:00 - 06:00)."""
+        return datetime.now().hour in (0, 1, 2, 3, 4, 5)
 
     def register_state_change_callback(
         self, callback: Callable[[PetState, PetState], None]
@@ -187,8 +205,13 @@ class PetStateMachine:
 
         with self._lock:
             self._current_tool = packet.tool
+            self._is_secret = getattr(packet, "is_secret", False)
             if packet.error:
                 self._last_error = packet.error
+                self._consecutive_errors += 1
+            elif event in ("PostToolUse", "Stop") and not packet.error:
+                self._consecutive_errors = 0
+
             if packet.title is not None:
                 self._current_title = packet.title
             if packet.detail is not None:
@@ -202,7 +225,14 @@ class PetStateMachine:
 
         elif event == "PostToolUse":
             if packet.error:
-                self.set_state(PetState.FAILED, schedule_revert=True)
+                # Trigger Detective Mode if 3 or more errors occur consecutively
+                if self._consecutive_errors >= 3:
+                    with self._lock:
+                        self._current_title = "🕵️ Modo Detective"
+                        self._current_detail = f"Racha de {self._consecutive_errors} errores: ¡a investigar!"
+                    self.set_state(PetState.REVIEW, schedule_revert=False)
+                else:
+                    self.set_state(PetState.FAILED, schedule_revert=True)
             else:
                 # Successful tool completion transitions to review
                 self.set_state(PetState.REVIEW, schedule_revert=False)
