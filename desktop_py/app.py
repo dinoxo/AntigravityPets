@@ -366,9 +366,9 @@ def run_qt_app() -> None:
                         self._last_gaze_idx = gaze_idx
                         self.update()
                 else:
-                    face_left = (dx < -40)
-                    if face_left != getattr(self, "_last_face_left", False):
-                        self._last_face_left = face_left
+                    last_pos = getattr(self, "_last_cursor_pos", None)
+                    if last_pos is None or abs(cpos.x() - last_pos.x()) > 6 or abs(cpos.y() - last_pos.y()) > 6:
+                        self._last_cursor_pos = cpos
                         self.update()
 
         def _trigger_gravity_drop(self) -> None:
@@ -449,9 +449,10 @@ def run_qt_app() -> None:
 
             # 1. Draw Pet Sprite (with Gaze Tracking when Idle)
             state = self.state_machine.current_state
-            face_left = False
-            if state == PetState.IDLE and not self.is_roaming and self.drag_position is None:
-                cpos = QCursor.pos()
+            cpos = QCursor.pos() if (state == PetState.IDLE and not self.is_roaming and self.drag_position is None) else None
+            gaze_shift = (0.0, 0.0)
+
+            if cpos is not None:
                 center_g = self.mapToGlobal(self.rect().center())
                 dx = cpos.x() - center_g.x()
                 dy = cpos.y() - center_g.y()
@@ -468,21 +469,42 @@ def run_qt_app() -> None:
                     h = self.pet_package.cell_height
                 else:
                     x, y, w, h = self.pet_package.get_frame_rect(state, self.current_frame)
-                    face_left = (dx < -40)
+                    dist = math.hypot(dx, dy)
+                    if dist > 15:
+                        ang = math.atan2(dy, dx)
+                        factor = min(1.0, dist / 250.0)
+                        gaze_shift = (factor * math.cos(ang) * 2.4, factor * math.sin(ang) * 1.2)
             else:
                 x, y, w, h = self.pet_package.get_frame_rect(state, self.current_frame)
 
             source_rect = QRect(x, y, w, h)
             target_rect = QRect(pet_x, hud_h, pet_w, pet_h)
+            painter.drawPixmap(target_rect, self.pixmap, source_rect)
 
-            if face_left:
-                painter.save()
-                painter.translate(pet_x + pet_w, hud_h)
-                painter.scale(-1, 1)
-                painter.drawPixmap(QRect(0, 0, pet_w, pet_h), self.pixmap, source_rect)
-                painter.restore()
-            else:
-                painter.drawPixmap(target_rect, self.pixmap, source_rect)
+            # Eye pupil gaze overlay for Cochepa (when idle and mouse tracking)
+            if cpos is not None and self.pet_package.slug == "cochepa" and (abs(gaze_shift[0]) > 0.3 or abs(gaze_shift[1]) > 0.3):
+                is_odd = (self.current_frame % 2 != 0)
+                ly = 71 if is_odd else 70
+                rx = 130 if is_odd else 131
+                ry = 65 if is_odd else 64
+
+                left_patch_rect = QRect(x + 97, y + ly, 8, 8)
+                right_patch_rect = QRect(x + rx, y + ry, 8, 8)
+
+                target_l = QRect(
+                    pet_x + int((97 + gaze_shift[0]) * self.scale_factor),
+                    hud_h + int((ly + gaze_shift[1]) * self.scale_factor),
+                    int(8 * self.scale_factor),
+                    int(8 * self.scale_factor),
+                )
+                target_r = QRect(
+                    pet_x + int((rx + gaze_shift[0]) * self.scale_factor),
+                    hud_h + int((ry + gaze_shift[1]) * self.scale_factor),
+                    int(8 * self.scale_factor),
+                    int(8 * self.scale_factor),
+                )
+                painter.drawPixmap(target_l, self.pixmap, left_patch_rect)
+                painter.drawPixmap(target_r, self.pixmap, right_patch_rect)
 
             from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPen
 
