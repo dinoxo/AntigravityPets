@@ -190,6 +190,13 @@ def run_qt_app() -> None:
             self.screensaver_timer.timeout.connect(self._tick_screensaver)
             self.screensaver_timer.start(1000)
 
+            self.roam_walk_timer = QTimer(self)
+            self.roam_walk_timer.timeout.connect(self._step_roam)
+
+            self.gaze_timer = QTimer(self)
+            self.gaze_timer.timeout.connect(self._tick_gaze)
+            self.gaze_timer.start(60)
+
             # Load pet package
             self.pet_package: Optional[PetPackage] = None
             self.pixmap: Optional[QPixmap] = None
@@ -297,34 +304,79 @@ def run_qt_app() -> None:
                 if self.sounds_enabled:
                     play_sound_async("ok")
 
+        def _start_roaming(self) -> None:
+            self.is_roaming = True
+            self.roam_walk_timer.start(40)
+            target_state = PetState.MOVE_RIGHT if self.roam_direction > 0 else PetState.MOVE_LEFT
+            self.state_machine.set_state(target_state, schedule_revert=False)
+            self.update()
+
+        def _stop_roaming(self) -> None:
+            self.is_roaming = False
+            self.roam_walk_timer.stop()
+            self.idle_seconds = 0
+            if self.state_machine.current_state in (PetState.MOVE_LEFT, PetState.MOVE_RIGHT):
+                self.state_machine.set_state(PetState.IDLE, schedule_revert=False)
+            self.update()
+
+        def _step_roam(self) -> None:
+            if not self.is_roaming:
+                return
+            screen = QApplication.primaryScreen().availableGeometry()
+            step = 3 * self.roam_direction
+            new_x = self.x() + step
+            min_x = screen.left() + 20
+            max_x = screen.right() - self.width() - 20
+
+            if new_x <= min_x:
+                new_x = min_x
+                self.roam_direction = 1
+                self.state_machine.set_state(PetState.MOVE_RIGHT, schedule_revert=False)
+            elif new_x >= max_x:
+                new_x = max_x
+                self.roam_direction = -1
+                self.state_machine.set_state(PetState.MOVE_LEFT, schedule_revert=False)
+
+            self.move(new_x, self.y())
+
         def _tick_screensaver(self) -> None:
-            if self.state_machine.current_state != PetState.IDLE or self.interaction_quote:
+            # If agent is active or an interaction quote is showing, cancel roaming and reset
+            if self.state_machine.current_state not in (PetState.IDLE, PetState.MOVE_LEFT, PetState.MOVE_RIGHT) or self.interaction_quote:
                 self.idle_seconds = 0
                 if self.is_roaming:
-                    self.is_roaming = False
-                    self.state_machine.set_state(PetState.IDLE, schedule_revert=False)
+                    self._stop_roaming()
                 return
 
-            self.idle_seconds += 1
-            if self.idle_seconds >= 600:  # 10 minutes
-                self.is_roaming = True
-                screen = QApplication.primaryScreen().availableGeometry()
-                step = 2 * self.roam_direction
-                new_x = self.x() + step
-                min_x = screen.left()
-                max_x = screen.right() - self.width()
+            if not self.is_roaming:
+                self.idle_seconds += 1
+                if self.idle_seconds >= 60:  # 1 minute of inactivity
+                    self._start_roaming()
 
-                if new_x <= min_x:
-                    self.roam_direction = 1
-                    self.state_machine.set_state(PetState.MOVE_RIGHT, schedule_revert=False)
-                elif new_x >= max_x:
-                    self.roam_direction = -1
-                    self.state_machine.set_state(PetState.MOVE_LEFT, schedule_revert=False)
+        def _tick_gaze(self) -> None:
+            if self.state_machine.current_state == PetState.IDLE and not self.is_roaming and self.drag_position is None:
+                cpos = QCursor.pos()
+                center_g = self.mapToGlobal(self.rect().center())
+                dx = cpos.x() - center_g.x()
+                dy = cpos.y() - center_g.y()
+
+                if self.pet_package and self.pet_package.rows >= 11:
+                    angle = (math.atan2(dy, dx) + math.pi) / (2 * math.pi)
+                    gaze_idx = int(angle * 16) % 16
+                    if gaze_idx != getattr(self, "_last_gaze_idx", -1):
+                        self._last_gaze_idx = gaze_idx
+                        self.update()
                 else:
-                    target_state = PetState.MOVE_RIGHT if self.roam_direction > 0 else PetState.MOVE_LEFT
-                    if self.state_machine.current_state != target_state:
-                        self.state_machine.set_state(target_state, schedule_revert=False)
-                self.move(new_x, self.y())
+                    face_left = (dx < -40)
+                    if face_left != getattr(self, "_last_face_left", False):
+                        self._last_face_left = face_left
+                        self.update()
+
+        def _trigger_gravity_drop(self) -> None:
+            screen = QApplication.primaryScreen().availableGeometry()
+            floor_y = screen.bottom() - self.height()
+            if self.y() < floor_y - 25:
+                self.physics.start_drop()
+                self.physics_timer.start(16)
 
         def _on_watchdog_timeout(self, task_name: str, elapsed: float) -> None:
             self.watchdog_signal.emit(task_name, elapsed)
@@ -397,26 +449,40 @@ def run_qt_app() -> None:
 
             # 1. Draw Pet Sprite (with Gaze Tracking when Idle)
             state = self.state_machine.current_state
-            if state == PetState.IDLE and self.pet_package.rows >= 11:
-                # Codex v2: 16 directional gaze frames in rows 9 and 10
+            face_left = False
+            if state == PetState.IDLE and not self.is_roaming and self.drag_position is None:
                 cpos = QCursor.pos()
                 center_g = self.mapToGlobal(self.rect().center())
                 dx = cpos.x() - center_g.x()
                 dy = cpos.y() - center_g.y()
-                angle = (math.atan2(dy, dx) + math.pi) / (2 * math.pi)
-                gaze_idx = int(angle * 16) % 16
-                row = 9 if gaze_idx < 8 else 10
-                col = gaze_idx if gaze_idx < 8 else (gaze_idx - 8)
-                x = col * self.pet_package.cell_width
-                y = row * self.pet_package.cell_height
-                w = self.pet_package.cell_width
-                h = self.pet_package.cell_height
+
+                if self.pet_package.rows >= 11:
+                    # Codex v2: 16 directional gaze frames in rows 9 and 10
+                    angle = (math.atan2(dy, dx) + math.pi) / (2 * math.pi)
+                    gaze_idx = int(angle * 16) % 16
+                    row = 9 if gaze_idx < 8 else 10
+                    col = gaze_idx if gaze_idx < 8 else (gaze_idx - 8)
+                    x = col * self.pet_package.cell_width
+                    y = row * self.pet_package.cell_height
+                    w = self.pet_package.cell_width
+                    h = self.pet_package.cell_height
+                else:
+                    x, y, w, h = self.pet_package.get_frame_rect(state, self.current_frame)
+                    face_left = (dx < -40)
             else:
                 x, y, w, h = self.pet_package.get_frame_rect(state, self.current_frame)
 
             source_rect = QRect(x, y, w, h)
             target_rect = QRect(pet_x, hud_h, pet_w, pet_h)
-            painter.drawPixmap(target_rect, self.pixmap, source_rect)
+
+            if face_left:
+                painter.save()
+                painter.translate(pet_x + pet_w, hud_h)
+                painter.scale(-1, 1)
+                painter.drawPixmap(QRect(0, 0, pet_w, pet_h), self.pixmap, source_rect)
+                painter.restore()
+            else:
+                painter.drawPixmap(target_rect, self.pixmap, source_rect)
 
             from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPen
 
@@ -468,6 +534,9 @@ def run_qt_app() -> None:
             if self.interaction_quote:
                 title = self.interaction_title or f"⏰ {now_str} hs"
                 detail = self.interaction_quote
+            elif self.is_roaming:
+                title = "🐾 De Paseo"
+                detail = "Paseando por el escritorio..."
             elif state == PetState.IDLE and not self.state_machine.current_title:
                 if self.state_machine.is_night_mode:
                     title = f"🌙 {now_str} hs (Madrugada)"
@@ -671,8 +740,7 @@ def run_qt_app() -> None:
             if event.button() == Qt.MouseButton.LeftButton:
                 self.idle_seconds = 0
                 if self.is_roaming:
-                    self.is_roaming = False
-                    self.state_machine.set_state(PetState.IDLE, schedule_revert=False)
+                    self._stop_roaming()
                 if self.physics_timer.isActive():
                     self.physics_timer.stop()
 
@@ -689,6 +757,8 @@ def run_qt_app() -> None:
 
         def mouseMoveEvent(self, event: QMouseEvent) -> None:
             if event.buttons() == Qt.MouseButton.LeftButton and self.drag_position is not None:
+                if self.is_roaming:
+                    self._stop_roaming()
                 new_pos = event.globalPosition().toPoint() - self.drag_position
                 dx = new_pos.x() - self.x()
                 self.move(new_pos)
@@ -700,14 +770,8 @@ def run_qt_app() -> None:
                 self.drag_position = None
                 self.state_machine.handle_drag_end()
                 self.idle_seconds = 0
-
-                # Check if dropped in mid-air -> start gravity bounce drop
-                screen = QApplication.primaryScreen().availableGeometry()
-                floor_y = screen.bottom() - self.height()
-                if self.y() < floor_y - 25:
-                    self.physics.start_drop()
-                    self.physics_timer.start(16)
-
+                if self.is_roaming:
+                    self._stop_roaming()
                 event.accept()
 
         def contextMenuEvent(self, event: QContextMenuEvent) -> None:
@@ -751,6 +815,8 @@ def run_qt_app() -> None:
             act_festejo.triggered.connect(lambda: self.trigger_interaction("festejo"))
             act_hora = actions_menu.addAction("⏰ Consultar Hora")
             act_hora.triggered.connect(lambda: self.trigger_interaction("hora"))
+            act_gravedad = actions_menu.addAction("🎈 Soltar con Gravedad (Rebote)")
+            act_gravedad.triggered.connect(self._trigger_gravity_drop)
 
             menu.addSeparator()
 
@@ -803,8 +869,7 @@ def run_qt_app() -> None:
             self.interaction_title = None
             self.idle_seconds = 0
             if self.is_roaming:
-                self.is_roaming = False
-                self.state_machine.set_state(PetState.IDLE, schedule_revert=False)
+                self._stop_roaming()
 
             if self.interaction_revert_timer.isActive():
                 self.interaction_revert_timer.stop()
