@@ -193,10 +193,6 @@ def run_qt_app() -> None:
             self.roam_walk_timer = QTimer(self)
             self.roam_walk_timer.timeout.connect(self._step_roam)
 
-            self.gaze_timer = QTimer(self)
-            self.gaze_timer.timeout.connect(self._tick_gaze)
-            self.gaze_timer.start(60)
-
             # Load pet package
             self.pet_package: Optional[PetPackage] = None
             self.pixmap: Optional[QPixmap] = None
@@ -352,24 +348,7 @@ def run_qt_app() -> None:
                 if self.idle_seconds >= 60:  # 1 minute of inactivity
                     self._start_roaming()
 
-        def _tick_gaze(self) -> None:
-            if self.state_machine.current_state == PetState.IDLE and not self.is_roaming and self.drag_position is None:
-                cpos = QCursor.pos()
-                center_g = self.mapToGlobal(self.rect().center())
-                dx = cpos.x() - center_g.x()
-                dy = cpos.y() - center_g.y()
 
-                if self.pet_package and self.pet_package.rows >= 11:
-                    angle = (math.atan2(dy, dx) + math.pi) / (2 * math.pi)
-                    gaze_idx = int(angle * 16) % 16
-                    if gaze_idx != getattr(self, "_last_gaze_idx", -1):
-                        self._last_gaze_idx = gaze_idx
-                        self.update()
-                else:
-                    last_pos = getattr(self, "_last_cursor_pos", None)
-                    if last_pos is None or abs(cpos.x() - last_pos.x()) > 6 or abs(cpos.y() - last_pos.y()) > 6:
-                        self._last_cursor_pos = cpos
-                        self.update()
 
         def _trigger_gravity_drop(self) -> None:
             screen = QApplication.primaryScreen().availableGeometry()
@@ -448,63 +427,12 @@ def run_qt_app() -> None:
             pet_x = (self.width() - pet_w) // 2
 
             # 1. Draw Pet Sprite (with Gaze Tracking when Idle)
+            # 1. Draw Pet Sprite
             state = self.state_machine.current_state
-            cpos = QCursor.pos() if (state == PetState.IDLE and not self.is_roaming and self.drag_position is None) else None
-            gaze_shift = (0.0, 0.0)
-
-            if cpos is not None:
-                center_g = self.mapToGlobal(self.rect().center())
-                dx = cpos.x() - center_g.x()
-                dy = cpos.y() - center_g.y()
-
-                if self.pet_package.rows >= 11:
-                    # Codex v2: 16 directional gaze frames in rows 9 and 10
-                    angle = (math.atan2(dy, dx) + math.pi) / (2 * math.pi)
-                    gaze_idx = int(angle * 16) % 16
-                    row = 9 if gaze_idx < 8 else 10
-                    col = gaze_idx if gaze_idx < 8 else (gaze_idx - 8)
-                    x = col * self.pet_package.cell_width
-                    y = row * self.pet_package.cell_height
-                    w = self.pet_package.cell_width
-                    h = self.pet_package.cell_height
-                else:
-                    x, y, w, h = self.pet_package.get_frame_rect(state, self.current_frame)
-                    dist = math.hypot(dx, dy)
-                    if dist > 15:
-                        ang = math.atan2(dy, dx)
-                        factor = min(1.0, dist / 250.0)
-                        gaze_shift = (factor * math.cos(ang) * 2.4, factor * math.sin(ang) * 1.2)
-            else:
-                x, y, w, h = self.pet_package.get_frame_rect(state, self.current_frame)
-
+            x, y, w, h = self.pet_package.get_frame_rect(state, self.current_frame)
             source_rect = QRect(x, y, w, h)
             target_rect = QRect(pet_x, hud_h, pet_w, pet_h)
             painter.drawPixmap(target_rect, self.pixmap, source_rect)
-
-            # Eye pupil gaze overlay for Cochepa (when idle and mouse tracking)
-            if cpos is not None and self.pet_package.slug == "cochepa" and (abs(gaze_shift[0]) > 0.3 or abs(gaze_shift[1]) > 0.3):
-                is_odd = (self.current_frame % 2 != 0)
-                ly = 71 if is_odd else 70
-                rx = 130 if is_odd else 131
-                ry = 65 if is_odd else 64
-
-                left_patch_rect = QRect(x + 97, y + ly, 8, 8)
-                right_patch_rect = QRect(x + rx, y + ry, 8, 8)
-
-                target_l = QRect(
-                    pet_x + int((97 + gaze_shift[0]) * self.scale_factor),
-                    hud_h + int((ly + gaze_shift[1]) * self.scale_factor),
-                    int(8 * self.scale_factor),
-                    int(8 * self.scale_factor),
-                )
-                target_r = QRect(
-                    pet_x + int((rx + gaze_shift[0]) * self.scale_factor),
-                    hud_h + int((ry + gaze_shift[1]) * self.scale_factor),
-                    int(8 * self.scale_factor),
-                    int(8 * self.scale_factor),
-                )
-                painter.drawPixmap(target_l, self.pixmap, left_patch_rect)
-                painter.drawPixmap(target_r, self.pixmap, right_patch_rect)
 
             from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPen
 

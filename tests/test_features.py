@@ -168,20 +168,8 @@ class TestDetectiveAndSecretStates(unittest.TestCase):
         self.assertTrue(sm.is_secret)
 
 
-class TestGazeAndRoaming(unittest.TestCase):
-    """Test gaze direction calculation and roaming settings."""
-
-    def test_horizontal_facing_calculation(self) -> None:
-        # dx < -40 means mouse is on the left -> face left
-        cursor_x_left = 100
-        pet_center_x = 200
-        dx_left = cursor_x_left - pet_center_x
-        self.assertLess(dx_left, -40)
-
-        # dx > -40 means mouse is on the right -> face normal/right
-        cursor_x_right = 300
-        dx_right = cursor_x_right - pet_center_x
-        self.assertGreater(dx_right, 40)
+class TestRoamingFeature(unittest.TestCase):
+    """Test roaming settings and thresholds."""
 
     def test_roaming_inactivity_threshold(self) -> None:
         # User requested 1 minute (60 seconds)
