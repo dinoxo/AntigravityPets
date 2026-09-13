@@ -845,10 +845,11 @@ def run_qt_app() -> None:
             self.state_machine.process_event(packet)
 
             if self.sounds_enabled:
-                if packet.event == "Stop" and not packet.error:
-                    play_sound_async("chime")
-                elif packet.error:
-                    play_sound_async("error")
+                if packet.event == "Stop":
+                    if not packet.error:
+                        play_sound_async("chime")
+                    else:
+                        play_sound_async("error")
 
             # Inactivity timer: return to resting state with clock after 12s of waiting or review
             if packet.event in ("PostInvocation", "PostToolUse", "Stop"):
