@@ -18,12 +18,12 @@
       "fps": 3
     },
     "move_left": {
-      "row": 1,
+      "row": 2,
       "frames": 8,
       "fps": 5
     },
     "move_right": {
-      "row": 2,
+      "row": 1,
       "frames": 8,
       "fps": 5
     },
