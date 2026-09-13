@@ -618,20 +618,7 @@ def run_qt_app() -> None:
                 title_rect = QRect(pill_x + padding_x, pill_y, pill_w - (padding_x * 2), pill_h)
                 painter.drawText(title_rect, int(Qt.AlignmentFlag.AlignCenter), title)
 
-            # 4. Subtle Git Branch Indicator in Corner
-            git_stat = self.git_monitor.current
-            branch_short = git_stat.branch[:14]
-            branch_icon = "⚠️" if git_stat.is_protected else "🌿"
-            dirty_mark = "*" if git_stat.is_dirty else ""
-            badge_text = f"{branch_icon} {branch_short}{dirty_mark}"
 
-            badge_font = QFont()
-            badge_font.setPointSize(int(6.5 * min(self.scale_factor, 1.4)))
-            painter.setFont(badge_font)
-            painter.setPen(QColor(160, 180, 200, 190))
-            badge_fm = QFontMetrics(badge_font)
-            badge_w = badge_fm.horizontalAdvance(badge_text)
-            painter.drawText(pill_x + pill_w - badge_w - 6, pill_y + 11, badge_text)
 
         def trigger_interaction(self, action: str = "saludo") -> None:
             """Trigger an interactive animation, sound, and witty Spanish teacher quote."""
