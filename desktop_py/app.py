@@ -274,8 +274,8 @@ def run_qt_app() -> None:
             self.update()
 
         def _on_pomodoro_break(self, tip: str) -> None:
-            self.interaction_title = "🍅 ¡Pausa de Pomodoro!"
-            self.interaction_quote = f"«¡Cumpliste 25 min de foco! {tip}»"
+            self.interaction_title = "🧘 ¡Pausa Activa!"
+            self.interaction_quote = f"«¡Cumpliste 25 min de trabajo! {tip}»"
             self.state_machine.set_state(PetState.WAVE, schedule_revert=False)
             self.interaction_revert_timer.start(8000)
             if self.sounds_enabled:
@@ -283,8 +283,8 @@ def run_qt_app() -> None:
             self.update()
 
         def _on_pomodoro_work(self) -> None:
-            self.interaction_title = "🍅 Foco Pomodoro"
-            self.interaction_quote = "«¡Terminó el recreo! A seguir programando con excelencia.»"
+            self.interaction_title = "💻 Vuelta al Código"
+            self.interaction_quote = "«¡Terminó la pausa activa! A seguir programando con excelencia.»"
             self.state_machine.set_state(PetState.WORKING, schedule_revert=False)
             self.interaction_revert_timer.start(5000)
             if self.sounds_enabled:
@@ -768,8 +768,8 @@ def run_qt_app() -> None:
             title_action.setEnabled(False)
             menu.addSeparator()
 
-            # Pomodoro control
-            pomo_str = f"🍅 Pomodoro ({self.pomodoro.formatted_time})"
+            # Pausa Activa control
+            pomo_str = f"🧘 Pausa Activa ({self.pomodoro.formatted_time})"
             if self.pomodoro.is_running:
                 pomo_act = menu.addAction(f"⏸️ Pausar {pomo_str}")
                 pomo_act.triggered.connect(self.pomodoro.pause)
