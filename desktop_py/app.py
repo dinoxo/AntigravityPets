@@ -834,9 +834,7 @@ def run_qt_app() -> None:
             self.state_machine.process_event(packet)
 
             if self.sounds_enabled:
-                if is_secret:
-                    play_sound_async("ok")
-                elif packet.event == "Stop" and not packet.error:
+                if packet.event == "Stop" and not packet.error:
                     play_sound_async("chime")
                 elif packet.error:
                     play_sound_async("error")
