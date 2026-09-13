@@ -1,7 +1,7 @@
 """Modular domain features for Antigravity Pets companion.
 
 Provides:
-- PomodoroManager: 25m work / 5m break cycle with active health recommendations.
+- PomodoroManager: 30m recurring hydration and stretching reminders with active health recommendations.
 - ActionHistory: Ring buffer tracking recent agent actions.
 - GitMonitor: Non-blocking inspector for active branch and dirty status.
 - PhysicsEngine: Realistic gravity and bounce damping for desktop overlay drops.
@@ -172,35 +172,40 @@ class GitMonitor:
 
 
 class PomodoroManager:
-    """Manages 25m work / 5m active break cycles with health recommendations."""
+    """Manages periodic reminders for hydration and stretching (default 30m interval)."""
 
-    WORK_DURATION = 25 * 60  # 25 minutes
-    BREAK_DURATION = 5 * 60  # 5 minutes
+    WORK_DURATION = 30 * 60  # 30 minutes
+    BREAK_DURATION = 0  # 0 means recurring 30m alert without separate break state
 
     ACTIVE_BREAK_TIPS = [
-        "👀 Regla 20-20-20: Mirá un punto a 6 metros durante 20 segundos para descansar la vista.",
-        "💧 Momento de hidratación: Tomá un buen vaso de agua fresca.",
-        "🧘 Postura y hombros: Estirá el cuello suavemente y rotá los hombros hacia atrás.",
-        "🚶 Caminata breve: Levantate de la silla y caminá un minuto para activar la circulación.",
-        "🫁 Respiración consciente: Hacé tres respiraciones lentas y profundas.",
+        "💧 Momento de hidratación: Tomá un buen vaso de agua fresca y rotá los hombros hacia atrás.",
+        "🧘 Postura y estiramiento: Estirá el cuello suavemente y rotá los hombros hacia atrás.",
+        "💧 Hidratación y movimiento: Tomá agua fresca y levantate un minuto a estirar las piernas.",
+        "🧘 Pausa activa: Estirá los brazos, rotá las muñecas y respirá profundo.",
+        "💧 ¡A hidratarse!: Tomá un vaso de agua fresca para despejar la mente y estirá la espalda.",
     ]
 
     def __init__(
         self,
+        work_duration: int = WORK_DURATION,
+        break_duration: int = BREAK_DURATION,
+        auto_start: bool = True,
         on_break_start: Optional[Callable[[str], None]] = None,
         on_work_start: Optional[Callable[[], None]] = None,
     ) -> None:
+        self.work_duration = work_duration
+        self.break_duration = break_duration
         self.on_break_start = on_break_start
         self.on_work_start = on_work_start
-        self.is_running = False
+        self.is_running = auto_start
         self.is_break = False
-        self.seconds_left = self.WORK_DURATION
+        self.seconds_left = self.work_duration
         self.completed_cycles = 0
 
     def start(self) -> None:
         self.is_running = True
         self.is_break = False
-        self.seconds_left = self.WORK_DURATION
+        self.seconds_left = self.work_duration
 
     def pause(self) -> None:
         self.is_running = False
@@ -209,33 +214,42 @@ class PomodoroManager:
         self.is_running = True
 
     def reset(self) -> None:
-        self.is_running = False
+        self.is_running = True
         self.is_break = False
-        self.seconds_left = self.WORK_DURATION
+        self.seconds_left = self.work_duration
 
     def tick_second(self) -> Optional[str]:
-        """Call every second. Returns tip when entering break, or None."""
+        """Call every second. Returns tip when interval expires, or None."""
         if not self.is_running:
             return None
 
         self.seconds_left -= 1
         if self.seconds_left <= 0:
-            if not self.is_break:
-                # Transition to break
-                self.is_break = True
-                self.seconds_left = self.BREAK_DURATION
+            if self.break_duration > 0:
+                if not self.is_break:
+                    # Transition to break
+                    self.is_break = True
+                    self.seconds_left = self.break_duration
+                    self.completed_cycles += 1
+                    tip = random.choice(self.ACTIVE_BREAK_TIPS)
+                    if self.on_break_start:
+                        self.on_break_start(tip)
+                    return tip
+                else:
+                    # Transition back to work
+                    self.is_break = False
+                    self.seconds_left = self.work_duration
+                    if self.on_work_start:
+                        self.on_work_start()
+                    return None
+            else:
+                # Direct recurring interval every work_duration seconds
                 self.completed_cycles += 1
+                self.seconds_left = self.work_duration
                 tip = random.choice(self.ACTIVE_BREAK_TIPS)
                 if self.on_break_start:
                     self.on_break_start(tip)
                 return tip
-            else:
-                # Transition back to work
-                self.is_break = False
-                self.seconds_left = self.WORK_DURATION
-                if self.on_work_start:
-                    self.on_work_start()
-                return None
         return None
 
     @property

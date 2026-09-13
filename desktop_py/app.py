@@ -270,10 +270,10 @@ def run_qt_app() -> None:
             self.update()
 
         def _on_pomodoro_break(self, tip: str) -> None:
-            self.interaction_title = "🧘 ¡Pausa Activa!"
-            self.interaction_quote = f"«¡Cumpliste 25 min de trabajo! {tip}»"
+            self.interaction_title = "💧🧘 ¡Tomá Agua y Estirate!"
+            self.interaction_quote = f"«¡Pasaron 30 minutos! {tip}»"
             self.state_machine.set_state(PetState.WAVE, schedule_revert=False)
-            self.interaction_revert_timer.start(8000)
+            self.interaction_revert_timer.start(9000)
             if self.sounds_enabled:
                 play_sound_async("chime")
             self.update()
@@ -583,6 +583,15 @@ def run_qt_app() -> None:
                     "«¡La cafeína pegó en el ángulo! Lista para seguir programando.»",
                     "«Saboreando con calma... La cafeína enciende las neuronas.»",
                 ]
+            elif action == "agua":
+                target_state = PetState.WAVE
+                self.interaction_title = "💧🧘 ¡Tomá Agua y Estirate!"
+                quotes = [
+                    "«¡Momento de hidratación! Tomá un buen vaso de agua fresca y rotá los hombros hacia atrás.»",
+                    "«¡A estirarse! Levantate de la silla un minuto, estirá el cuello y tomá agua fresca.»",
+                    "«Cuidá la postura: estirá la espalda, rotá las muñecas y tomate un buen vaso de agua.»",
+                    "«Hidratación y movimiento: despejá la vista, estirá los brazos y tomá agua fresca.»",
+                ]
             elif action == "saludo":
                 target_state = PetState.WAVE
                 self.interaction_title = "👋 Saludo Cordial"
@@ -718,14 +727,14 @@ def run_qt_app() -> None:
             title_action.setEnabled(False)
             menu.addSeparator()
 
-            # Pausa Activa control
-            pomo_str = f"🧘 Pausa Activa ({self.pomodoro.formatted_time})"
+            # Recordatorio Agua y Estiramiento (automático cada 30m)
+            pomo_str = f"💧 Tomar Agua y Estirarse ({self.pomodoro.formatted_time})"
             if self.pomodoro.is_running:
                 pomo_act = menu.addAction(f"⏸️ Pausar {pomo_str}")
                 pomo_act.triggered.connect(self.pomodoro.pause)
             else:
-                pomo_act = menu.addAction(f"▶️ Iniciar {pomo_str}")
-                pomo_act.triggered.connect(self.pomodoro.resume if self.pomodoro.seconds_left < self.pomodoro.WORK_DURATION else self.pomodoro.start)
+                pomo_act = menu.addAction(f"▶️ Reanudar {pomo_str}")
+                pomo_act.triggered.connect(self.pomodoro.resume)
 
             # History drawer toggle
             hist_label = "📜 Ocultar Historial" if self.show_history else "📜 Ver Historial de Acciones"
@@ -736,6 +745,8 @@ def run_qt_app() -> None:
 
             # Actions submenu
             actions_menu = menu.addMenu("Acciones")
+            act_agua = actions_menu.addAction("💧 Tomar Agua y Estirarse")
+            act_agua.triggered.connect(lambda: self.trigger_interaction("agua"))
             act_arch = actions_menu.addAction("🧑‍🏫 Consejo de Arquitectura")
             act_arch.triggered.connect(lambda: self.trigger_interaction("arquitectura"))
             act_cafe = actions_menu.addAction("☕ Tomar Café")

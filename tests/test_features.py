@@ -73,12 +73,11 @@ class TestWatchdogTimer(unittest.TestCase):
 
 
 class TestPomodoroManager(unittest.TestCase):
-    """Test work/break cycle and formatting."""
+    """Test 30m recurring hydration reminder and work/break cycles."""
 
     def test_timer_initial_and_tick(self) -> None:
         mgr = PomodoroManager()
-        self.assertEqual(mgr.formatted_time, "25:00")
-        mgr.start()
+        self.assertEqual(mgr.formatted_time, "30:00")
         self.assertTrue(mgr.is_running)
 
         # Fast forward seconds
@@ -87,10 +86,22 @@ class TestPomodoroManager(unittest.TestCase):
         self.assertEqual(mgr.seconds_left, 1)
 
         tip = mgr.tick_second()
+        self.assertIsNotNone(tip)
+        self.assertEqual(mgr.seconds_left, mgr.work_duration)
+        self.assertEqual(mgr.completed_cycles, 1)
+
+    def test_timer_with_break_duration(self) -> None:
+        mgr = PomodoroManager(work_duration=25 * 60, break_duration=5 * 60, auto_start=False)
+        self.assertEqual(mgr.formatted_time, "25:00")
+        self.assertFalse(mgr.is_running)
+        mgr.start()
+        self.assertTrue(mgr.is_running)
+
+        mgr.seconds_left = 1
+        tip = mgr.tick_second()
         self.assertTrue(mgr.is_break)
         self.assertIsNotNone(tip)
-        self.assertEqual(mgr.seconds_left, PomodoroManager.BREAK_DURATION)
-        self.assertEqual(mgr.completed_cycles, 1)
+        self.assertEqual(mgr.seconds_left, 5 * 60)
 
 
 class TestPhysicsEngine(unittest.TestCase):
